@@ -20,8 +20,6 @@ import io
 import json
 from datetime import datetime
 import re
-import os
-
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -449,51 +447,112 @@ with TAB3:
     else:
         df = st.session_state.dataset_labeled
         feat_cols = st.session_state.feature_columns
-        with st.form("predict_form"):
-            student_name = st.text_input("Öğrenci adı/etiketi", value="Öğrenci-001")
-            inputs = {}
-            for col in feat_cols:
-                # Özellik alanlarını tipine göre oluştur
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    default = float(df[col].median()) if pd.notnull(df[col].median()) else 0.0
-                    inputs[col] = st.number_input(col, value=default)
-                else:
-                    cats = sorted([str(x) for x in df[col].dropna().unique().tolist()][:50])
-                    default = cats[0] if cats else ""
-                    inputs[col] = st.selectbox(col, options=cats if cats else [""])
-            submitted = st.form_submit_button("Tahmin Et", type="primary")
-        if submitted:
-            X_new = pd.DataFrame([inputs])
-            model = st.session_state.model
-            try:
-                proba = model.predict_proba(X_new)[0]
-                classes = getattr(model, "classes_", st.session_state.classes)
-                pairs = list(zip(classes, proba))
-                pairs.sort(key=lambda x: x[1], reverse=True)
-                pred = pairs[0][0]
-                top3 = pairs[:3]
-            except Exception:
-                pred = model.predict(X_new)[0]
-                top3 = [(pred, 1.0)]
-            st.session_state.last_pred = pred
-            st.session_state.last_probs = top3
-            st.session_state.last_student = {"name": student_name, "inputs": inputs}
-            st.success(f"Tahmin edilen öğrenme stili: **{pred}**")
-            st.write("**Olasılıklar (top-3):**")
-            st.table(pd.DataFrame({"stil": [p[0] for p in top3], "olasılık": [round(p[1], 4) for p in top3]}))
-            tips = style_recommendations(pred, top3)
-            st.markdown("### Kişiselleştirilmiş Öneriler")
-            st.markdown("**Öğrenci**")
-            for t in tips["öğrenci"]:
-                st.markdown(f"- {t}")
-            st.markdown("**Veli**")
-            for t in tips["veli"]:
-                st.markdown(f"- {t}")
-            st.markdown("**Öğretmen**")
-            for t in tips["öğretmen"]:
-                st.markdown(f"- {t}")
+
+        # Kullanım modu: Veriden seç veya elle gir
+        mode = st.radio("Girdi yöntemi", ["Veriden seç", "Elle gir"], horizontal=True)
+
+        # Varsayılan öğrenci adı
+        default_name = "Öğrenci-001"
+
+        if mode == "Veriden seç":
+            # Bir kayıt seçtir (PII yoksa indeks üzerinden)
+            options = list(df.index)
+            if not options:
+                st.warning("Veri bulunamadı.")
+            else:
+                def fmt(i):
+                    lbl = str(df.loc[i, st.session_state.target_col]) if st.session_state.target_col in df.columns else "?"
+                    return f"Kayıt {i} — etiket: {lbl}"
+                selected_idx = st.selectbox("Kayıt seç", options=options, format_func=fmt, index=0)
+                # Seçilen kayıttan giriş değerlerini hazırla
+                X_row = df.loc[selected_idx, feat_cols]
+                inputs = {}
+                for col in feat_cols:
+                    val = X_row[col]
+                    if pd.api.types.is_numeric_dtype(df[col]):
+                        inputs[col] = float(0.0 if pd.isna(val) else val)
+                    else:
+                        inputs[col] = str(val)
+                student_name = f"Öğrenci-{int(selected_idx):03d}"
+                # Tahmini anında göster butonla
+                if st.button("Seçili kayda göre tahmin et", type="primary"):
+                    X_new = pd.DataFrame([inputs])
+                    model = st.session_state.model
+                    try:
+                        proba = model.predict_proba(X_new)[0]
+                        classes = getattr(model, "classes_", st.session_state.classes)
+                        pairs = list(zip(classes, proba))
+                        pairs.sort(key=lambda x: x[1], reverse=True)
+                        pred = pairs[0][0]
+                        top3 = pairs[:3]
+                    except Exception:
+                        pred = model.predict(X_new)[0]
+                        top3 = [(pred, 1.0)]
+                    st.session_state.last_pred = pred
+                    st.session_state.last_probs = top3
+                    st.session_state.last_student = {"name": student_name, "inputs": inputs}
+                    st.success(f"Tahmin edilen öğrenme stili: **{pred}**")
+                    st.write("**Olasılıklar (top-3):**")
+                    st.table(pd.DataFrame({"stil": [p[0] for p in top3], "olasılık": [round(p[1], 4) for p in top3]}))
+                    tips = style_recommendations(pred, top3)
+                    st.markdown("### Kişiselleştirilmiş Öneriler")
+                    st.markdown("**Öğrenci**")
+                    for t in tips["öğrenci"]:
+                        st.markdown(f"- {t}")
+                    st.markdown("**Veli**")
+                    for t in tips["veli"]:
+                        st.markdown(f"- {t}")
+                    st.markdown("**Öğretmen**")
+                    for t in tips["öğretmen"]:
+                        st.markdown(f"- {t}")
+        else:
+            # Elle giriş modu (mevcut form korunuyor)
+            with st.form("predict_form"):
+                student_name = st.text_input("Öğrenci adı/etiketi", value=default_name)
+                inputs = {}
+                for col in feat_cols:
+                    # Özellik alanlarını tipine göre oluştur
+                    if pd.api.types.is_numeric_dtype(df[col]):
+                        default = float(df[col].median()) if pd.notnull(df[col].median()) else 0.0
+                        inputs[col] = st.number_input(col, value=default)
+                    else:
+                        cats = sorted([str(x) for x in df[col].dropna().unique().tolist()][:50])
+                        default = cats[0] if cats else ""
+                        inputs[col] = st.selectbox(col, options=cats if cats else [""])
+                submitted = st.form_submit_button("Tahmin Et", type="primary")
+            if submitted:
+                X_new = pd.DataFrame([inputs])
+                model = st.session_state.model
+                try:
+                    proba = model.predict_proba(X_new)[0]
+                    classes = getattr(model, "classes_", st.session_state.classes)
+                    pairs = list(zip(classes, proba))
+                    pairs.sort(key=lambda x: x[1], reverse=True)
+                    pred = pairs[0][0]
+                    top3 = pairs[:3]
+                except Exception:
+                    pred = model.predict(X_new)[0]
+                    top3 = [(pred, 1.0)]
+                st.session_state.last_pred = pred
+                st.session_state.last_probs = top3
+                st.session_state.last_student = {"name": student_name, "inputs": inputs}
+                st.success(f"Tahmin edilen öğrenme stili: **{pred}**")
+                st.write("**Olasılıklar (top-3):**")
+                st.table(pd.DataFrame({"stil": [p[0] for p in top3], "olasılık": [round(p[1], 4) for p in top3]}))
+                tips = style_recommendations(pred, top3)
+                st.markdown("### Kişiselleştirilmiş Öneriler")
+                st.markdown("**Öğrenci**")
+                for t in tips["öğrenci"]:
+                    st.markdown(f"- {t}")
+                st.markdown("**Veli**")
+                for t in tips["veli"]:
+                    st.markdown(f"- {t}")
+                st.markdown("**Öğretmen**")
+                for t in tips["öğretmen"]:
+                    st.markdown(f"- {t}")
 
 # ---------- TAB 4 ----------
+
 with TAB4:
     st.subheader("Rapor oluştur ve indir")
     if not st.session_state.last_pred:
