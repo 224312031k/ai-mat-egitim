@@ -25,9 +25,6 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
-import os
-from fpdf import FPDF
-
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -285,16 +282,22 @@ def build_pdf(title: str, student_name: str, predicted_style: str, tips: Dict[st
         raise RuntimeError("FPDF mevcut değil")
     pdf = FPDF()
     pdf.add_page()
+
+    # Unicode fontu repodaki fonts klasöründen yükle
+    font_path = os.path.join("fonts", "DejaVuSans.ttf")
     try:
-        pdf.add_font('DejaVu', '', '', uni=True)
-        pdf.set_font('DejaVu', size=14)
-    except Exception:
+        pdf.add_font('DejaVu', '', font_path, uni=True)
+        pdf.set_font('DejaVu', '', 14)
+    except Exception as e:
+        # Font bulunamazsa Arial'a düş ve bilgilendir
         pdf.set_font('Arial', size=14)
+
     pdf.cell(0, 10, txt=title, ln=True)
     pdf.set_font_size(12)
     pdf.cell(0, 8, txt=f"Öğrenci: {student_name}", ln=True)
     pdf.cell(0, 8, txt=f"Tahmin edilen öğrenme stili: {predicted_style}", ln=True)
     pdf.ln(4)
+
     def write_list(header: str, items: List[str]):
         pdf.set_font_size(12)
         pdf.cell(0, 8, txt=header, ln=True)
@@ -302,12 +305,15 @@ def build_pdf(title: str, student_name: str, predicted_style: str, tips: Dict[st
         for it in items:
             pdf.multi_cell(0, 6, txt=f"• {it}")
         pdf.ln(2)
+
     tips = tips or {}
     write_list("Öğrenci için öneriler:", tips.get("öğrenci", []))
     write_list("Veliye öneriler:", tips.get("veli", []))
     write_list("Öğretmene öneriler:", tips.get("öğretmen", []))
     write_list("Olasılıklar:", tips.get("olasılıklar", []))
-    out = pdf.output(dest="S").encode("latin1", "ignore")
+
+    # fpdf2'de S çıktısı string döner; latin-1 encode ile güvenli şekilde bayt'a çeviriyoruz
+    out = pdf.output(dest="S").encode("latin-1", "ignore")
     return out
 
 
@@ -384,10 +390,17 @@ with TAB1:
         st.session_state.theme_used_cols = theme_used_cols
 
         st.success("Otomatik etiketleme tamamlandı → 'learning_style' üretildi ve score_* sütunları eklendi.")
+        # En yüksek skora göre belirlenen stil zaten 'learning_style' sütununda; özetini gösterelim
+        st.write("**Etiket (learning_style) dağılımı:**")
+        counts = df_labeled['learning_style'].value_counts(dropna=True)
+        st.bar_chart(counts)
+
         st.dataframe(df_labeled.head(20))
         st.download_button("Etiketlenmiş veri (CSV) indir", data=df_labeled.to_csv(index=False).encode("utf-8"), file_name="dataset_labeled.csv", mime="text/csv")
 
         with st.expander("Tema bazında kullanılan soru sayıları"):
+            for th, cols in theme_used_cols.items():
+                st.write(f"**{th}**: {len(cols)} madde")
             for th, cols in theme_used_cols.items():
                 st.write(f"**{th}**: {len(cols)} madde")
 
@@ -512,28 +525,3 @@ with TAB4:
 
 st.divider()
 st.caption("v1.1 — Auto-label entegre. Sonraki adımlar: model karşılaştırma, hiperparametre arama, önem analizi, veli paneli.")
-import os
-from fpdf import FPDF
-
-# PDF oluşturma fonksiyonu
-def pdf_olustur(ogrenme_stili, oneriler):
-    pdf = FPDF()
-    pdf.add_page()
-    font_path = os.path.join("fonts", "DejaVuSans.ttf")
-    pdf.add_font('DejaVu', '', font_path, uni=True)
-    pdf.set_font('DejaVu', '', 14)
-
-    pdf.cell(0, 10, "Bireysel Matematik Eğitimi Raporu", ln=True)
-    pdf.cell(0, 10, f"Öğrenme Stili: {ogrenme_stili}", ln=True)
-    pdf.multi_cell(0, 10, f"Öneriler:\n{oneriler}")
-
-    pdf_output = "rapor.pdf"
-    pdf.output(pdf_output)
-    return pdf_output
-
-# Streamlit kısmı
-if 'ogrenme_stili' in locals() and 'oneriler' in locals():
-    if st.button("📄 PDF olarak indir"):
-        pdf_dosya = pdf_olustur(ogrenme_stili, oneriler)
-        with open(pdf_dosya, "rb") as f:
-            st.download_button("PDF'yi İndir", f, file_name="rapor.pdf")
