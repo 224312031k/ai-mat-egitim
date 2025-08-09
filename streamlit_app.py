@@ -25,6 +25,9 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
+import os
+from fpdf import FPDF
+
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -509,3 +512,28 @@ with TAB4:
 
 st.divider()
 st.caption("v1.1 — Auto-label entegre. Sonraki adımlar: model karşılaştırma, hiperparametre arama, önem analizi, veli paneli.")
+import os
+from fpdf import FPDF
+
+# PDF oluşturma fonksiyonu
+def pdf_olustur(ogrenme_stili, oneriler):
+    pdf = FPDF()
+    pdf.add_page()
+    font_path = os.path.join("fonts", "DejaVuSans.ttf")
+    pdf.add_font('DejaVu', '', font_path, uni=True)
+    pdf.set_font('DejaVu', '', 14)
+
+    pdf.cell(0, 10, "Bireysel Matematik Eğitimi Raporu", ln=True)
+    pdf.cell(0, 10, f"Öğrenme Stili: {ogrenme_stili}", ln=True)
+    pdf.multi_cell(0, 10, f"Öneriler:\n{oneriler}")
+
+    pdf_output = "rapor.pdf"
+    pdf.output(pdf_output)
+    return pdf_output
+
+# Streamlit kısmı
+if 'ogrenme_stili' in locals() and 'oneriler' in locals():
+    if st.button("📄 PDF olarak indir"):
+        pdf_dosya = pdf_olustur(ogrenme_stili, oneriler)
+        with open(pdf_dosya, "rb") as f:
+            st.download_button("PDF'yi İndir", f, file_name="rapor.pdf")
