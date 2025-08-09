@@ -42,6 +42,10 @@ try:
 except Exception:
     FPDF_AVAILABLE = False
 
+# Kimlik sütunu (sadece görüntü için) seçimini saklamak için
+if "id_col" not in st.session_state:
+    st.session_state.id_col = None
+
 # =============== Yardımcılar: Veri Temizleme & Etiketleme ===============
 LIKERT_MAP = {
     "kesinlikle katılıyorum": 5,
@@ -283,22 +287,18 @@ def build_pdf(title: str, student_name: str, predicted_style: str, tips: Dict[st
         raise RuntimeError("FPDF mevcut değil")
     pdf = FPDF()
     pdf.add_page()
-
     # Unicode fontu repodaki fonts klasöründen yükle
     font_path = os.path.join("fonts", "DejaVuSans.ttf")
     try:
         pdf.add_font('DejaVu', '', font_path, uni=True)
         pdf.set_font('DejaVu', '', 14)
-    except Exception as e:
-        # Font bulunamazsa Arial'a düş ve bilgilendir
+    except Exception:
         pdf.set_font('Arial', size=14)
-
     pdf.cell(0, 10, txt=title, ln=True)
     pdf.set_font_size(12)
     pdf.cell(0, 8, txt=f"Öğrenci: {student_name}", ln=True)
     pdf.cell(0, 8, txt=f"Tahmin edilen öğrenme stili: {predicted_style}", ln=True)
     pdf.ln(4)
-
     def write_list(header: str, items: List[str]):
         pdf.set_font_size(12)
         pdf.cell(0, 8, txt=header, ln=True)
@@ -306,14 +306,11 @@ def build_pdf(title: str, student_name: str, predicted_style: str, tips: Dict[st
         for it in items:
             pdf.multi_cell(0, 6, txt=f"• {it}")
         pdf.ln(2)
-
     tips = tips or {}
     write_list("Öğrenci için öneriler:", tips.get("öğrenci", []))
     write_list("Veliye öneriler:", tips.get("veli", []))
     write_list("Öğretmene öneriler:", tips.get("öğretmen", []))
     write_list("Olasılıklar:", tips.get("olasılıklar", []))
-
-    # fpdf2'de S çıktısı string döner; latin-1 encode ile güvenli şekilde bayt'a çeviriyoruz
     out = pdf.output(dest="S").encode("latin-1", "ignore")
     return out
 
@@ -376,8 +373,15 @@ with TAB1:
             df_raw = pd.read_csv(up, sep=";")
         st.session_state.dataset_raw = df_raw
         st.success(f"Yüklendi: {df_raw.shape[0]} satır, {df_raw.shape[1]} sütun")
-        with st.expander("Ham veri önizleme", expanded=False):
-            st.dataframe(df_raw.head(20))
+        with st.expander("Ham veri önizleme (isim sütunu dahil)", expanded=False):
+            st.dataframe(df_raw.head(50))
+        
+        # Kullanıcıya 'isim' kolonunu sadece GÖRÜNTÜ için seçtir (modelde kullanılmayacak)
+        name_like = [c for c in df_raw.columns if any(k in normalize_text(c) for k in ["isim","ad","soyad","ad soyad","name"]) ]
+        if name_like:
+            st.session_state.id_col = st.selectbox("Kimlik/İsim sütunu (sadece görüntü için)", options=name_like, index=0)
+        else:
+            st.session_state.id_col = None
 
         # PII temizleme
         df_clean, dropped = drop_pii_columns(df_raw)
@@ -391,7 +395,6 @@ with TAB1:
         st.session_state.theme_used_cols = theme_used_cols
 
         st.success("Otomatik etiketleme tamamlandı → 'learning_style' üretildi ve score_* sütunları eklendi.")
-        # En yüksek skora göre belirlenen stil zaten 'learning_style' sütununda; özetini gösterelim
         st.write("**Etiket (learning_style) dağılımı:**")
         counts = df_labeled['learning_style'].value_counts(dropna=True)
         st.bar_chart(counts)
@@ -446,73 +449,67 @@ with TAB3:
     if st.session_state.model is None or st.session_state.dataset_labeled is None:
         st.info("Önce veri yükleyip bir model eğitin.")
     else:
+        df_raw = st.session_state.dataset_raw
         df = st.session_state.dataset_labeled
         feat_cols = st.session_state.feature_columns
 
         # Kullanım modu: Veriden seç veya elle gir
         mode = st.radio("Girdi yöntemi", ["Veriden seç", "Elle gir"], horizontal=True)
-
-        # Varsayılan öğrenci adı
         default_name = "Öğrenci-001"
 
-        if mode == "Veriden seç":
-            # Bir kayıt seçtir (PII yoksa indeks üzerinden)
-            options = list(df.index)
-            if not options:
-                st.warning("Veri bulunamadı.")
-            else:
-                def fmt(i):
-                    lbl = str(df.loc[i, st.session_state.target_col]) if st.session_state.target_col in df.columns else "?"
-                    return f"Kayıt {i} — etiket: {lbl}"
-                selected_idx = st.selectbox("Kayıt seç", options=options, format_func=fmt, index=0)
-                # Seçilen kayıttan giriş değerlerini hazırla
-                X_row = df.loc[selected_idx, feat_cols]
-                inputs = {}
-                for col in feat_cols:
-                    val = X_row[col]
-                    if pd.api.types.is_numeric_dtype(df[col]):
-                        inputs[col] = float(0.0 if pd.isna(val) else val)
-                    else:
-                        inputs[col] = str(val)
-                student_name = f"Öğrenci-{int(selected_idx):03d}"
-                # Tahmini anında göster butonla
-                if st.button("Seçili kayda göre tahmin et", type="primary"):
-                    X_new = pd.DataFrame([inputs])
-                    model = st.session_state.model
-                    try:
-                        proba = model.predict_proba(X_new)[0]
-                        classes = getattr(model, "classes_", st.session_state.classes)
-                        pairs = list(zip(classes, proba))
-                        pairs.sort(key=lambda x: x[1], reverse=True)
-                        pred = pairs[0][0]
-                        top3 = pairs[:3]
-                    except Exception:
-                        pred = model.predict(X_new)[0]
-                        top3 = [(pred, 1.0)]
-                    st.session_state.last_pred = pred
-                    st.session_state.last_probs = top3
-                    st.session_state.last_student = {"name": student_name, "inputs": inputs}
-                    st.success(f"Tahmin edilen öğrenme stili: **{pred}**")
-                    st.write("**Olasılıklar (top-3):**")
-                    st.table(pd.DataFrame({"stil": [p[0] for p in top3], "olasılık": [round(p[1], 4) for p in top3]}))
-                    tips = style_recommendations(pred, top3)
-                    st.markdown("### Kişiselleştirilmiş Öneriler")
-                    st.markdown("**Öğrenci**")
-                    for t in tips["öğrenci"]:
-                        st.markdown(f"- {t}")
-                    st.markdown("**Veli**")
-                    for t in tips["veli"]:
-                        st.markdown(f"- {t}")
-                    st.markdown("**Öğretmen**")
-                    for t in tips["öğretmen"]:
-                        st.markdown(f"- {t}")
+        if mode == "Veriden seç" and st.session_state.id_col and st.session_state.id_col in df_raw.columns:
+            id_col = st.session_state.id_col
+            # İsim listesini oluştur
+            name_options = df_raw[id_col].dropna().astype(str)
+            # Dizini korumak için Series kullan
+            selected_name = st.selectbox("Öğrenci seç", options=name_options.index, format_func=lambda i: f"{df_raw.loc[i, id_col]} (kayıt {i})")
+            # Seçilen satır indeksini df_labeled ile hizala ve özellikleri al
+            X_row = df.loc[selected_name, feat_cols]
+            inputs = {}
+            for col in feat_cols:
+                val = X_row[col]
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    inputs[col] = float(0.0 if pd.isna(val) else val)
+                else:
+                    inputs[col] = str(val)
+            student_name = str(df_raw.loc[selected_name, id_col])
+
+            if st.button("Seçili öğrenciye göre tahmin et", type="primary"):
+                X_new = pd.DataFrame([inputs])
+                model = st.session_state.model
+                try:
+                    proba = model.predict_proba(X_new)[0]
+                    classes = getattr(model, "classes_", st.session_state.classes)
+                    pairs = list(zip(classes, proba))
+                    pairs.sort(key=lambda x: x[1], reverse=True)
+                    pred = pairs[0][0]
+                    top3 = pairs[:3]
+                except Exception:
+                    pred = model.predict(X_new)[0]
+                    top3 = [(pred, 1.0)]
+                st.session_state.last_pred = pred
+                st.session_state.last_probs = top3
+                st.session_state.last_student = {"name": student_name, "inputs": inputs}
+                st.success(f"Tahmin edilen öğrenme stili: **{pred}** — Öğrenci: {student_name}")
+                st.write("**Olasılıklar (top-3):**")
+                st.table(pd.DataFrame({"stil": [p[0] for p in top3], "olasılık": [round(p[1], 4) for p in top3]}))
+                tips = style_recommendations(pred, top3)
+                st.markdown("### Kişiselleştirilmiş Öneriler")
+                st.markdown("**Öğrenci**")
+                for t in tips["öğrenci"]:
+                    st.markdown(f"- {t}")
+                st.markdown("**Veli**")
+                for t in tips["veli"]:
+                    st.markdown(f"- {t}")
+                st.markdown("**Öğretmen**")
+                for t in tips["öğretmen"]:
+                    st.markdown(f"- {t}")
         else:
-            # Elle giriş modu (mevcut form korunuyor)
+            # Elle giriş modu (mevcut form)
             with st.form("predict_form"):
                 student_name = st.text_input("Öğrenci adı/etiketi", value=default_name)
                 inputs = {}
                 for col in feat_cols:
-                    # Özellik alanlarını tipine göre oluştur
                     if pd.api.types.is_numeric_dtype(df[col]):
                         default = float(df[col].median()) if pd.notnull(df[col].median()) else 0.0
                         inputs[col] = st.number_input(col, value=default)
@@ -553,6 +550,7 @@ with TAB3:
                     st.markdown(f"- {t}")
 
 # ---------- TAB 4 ----------
+
 
 with TAB4:
     st.subheader("Rapor oluştur ve indir")
