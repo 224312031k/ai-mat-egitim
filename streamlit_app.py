@@ -727,3 +727,22 @@ with TAB5:
 
 st.divider()
 st.caption("v1.2 — Matematik Tanılama sekmesi eklendi. Sonraki: hata türü analizi, uyarlanabilir zorluk, IRT.")
+oneriler = {
+    "Görsel": [
+        {"Konu": "Geometri", "Yöntem": "Renkli şekil ve animasyon videoları", "Kaynak": "https://www.youtube.com/watch?v=abc123"},
+        {"Konu": "Fonksiyon Grafikleri", "Yöntem": "İnteraktif grafik uygulamaları", "Kaynak": "https://www.geogebra.org/"},
+    ],
+    "İşitsel": [
+        {"Konu": "Problemler", "Yöntem": "Adım adım sözlü anlatım videoları", "Kaynak": "https://www.youtube.com/watch?v=xyz456"},
+        {"Konu": "Cebir", "Yöntem": "Podcast ile konu tekrarı", "Kaynak": "https://podcast.mathlearning.com"},
+    ],
+    "Kinestetik": [
+        {"Konu": "Geometri", "Yöntem": "Origami ve 3D model yapımı", "Kaynak": "https://www.youtube.com/watch?v=kinestetikgeo"},
+        {"Konu": "Kesirler", "Yöntem": "Masa oyunları ve manipülatif materyaller", "Kaynak": "https://mathgames.com"},
+    ],
+    "Okuma-Yazma": [
+        {"Konu": "Denklem Çözme", "Yöntem": "Yazılı not ve soru bankası", "Kaynak": "https://www.sorubankasi.com/"},
+        {"Konu": "Matematiksel İfadeler", "Yöntem": "Kendi notunu çıkarma ve tekrar", "Kaynak": "https://matematikkitabi.com"},
+    ]
+}
+
