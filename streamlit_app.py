@@ -354,11 +354,12 @@ if "theme_used_cols" not in st.session_state:
     st.session_state.theme_used_cols = {}
 
 
-TAB1, TAB2, TAB3, TAB4 = st.tabs([
+TAB1, TAB2, TAB3, TAB4, TAB5 = st.tabs([
     "1) Veri Yükle & Etiketle",
     "2) Model Eğit",
     "3) Öğrenci Tahmini",
     "4) Raporlar & Dışa Aktarım",
+    "5) Matematik Tanılama",
 ])
 
 # ---------- TAB 1 ----------
@@ -584,4 +585,145 @@ with TAB4:
         )
 
 st.divider()
-st.caption("v1.1 — Auto-label entegre. Sonraki adımlar: model karşılaştırma, hiperparametre arama, önem analizi, veli paneli.")
+# ---------- TAB 5 ----------
+with TAB5:
+    st.subheader("Matematik Tanılama (Hızlı Test)")
+    st.caption("Rastgele üretilen sorularla konu bazlı güçlü/zayıf alanları belirler.")
+
+    import random
+    try:
+        import sympy as sp
+    except Exception:
+        st.warning("SymPy yüklü değil. requirements.txt dosyanıza 'sympy' ekleyin ve yeniden deploy edin.")
+        sp = None
+
+    topics = {
+        "dört_işlem": "Dört İşlem",
+        "kesirler": "Kesirler",
+        "oran_oranti": "Oran-Orantı",
+        "denklem": "Birinci Dereceden Denklem",
+        "geometri_alan": "Geometri: Alan"
+    }
+
+    def gen_question(topic_key):
+        if topic_key == "dört_işlem":
+            a, b = random.randint(5, 50), random.randint(2, 20)
+            op = random.choice(["+","-","*","/"])
+            if op == "/":
+                b = random.randint(2, 10)
+                text = f"{a*b} / {b} = ?"
+                ans = a
+            elif op == "*":
+                text = f"{a} * {b} = ?"; ans = a*b
+            elif op == "+":
+                text = f"{a} + {b} = ?"; ans = a+b
+            else:
+                if a < b: a, b = b, a
+                text = f"{a} - {b} = ?"; ans = a-b
+            return text, ans
+        if topic_key == "kesirler":
+            n1, d1 = random.randint(1,9), random.randint(2,9)
+            n2, d2 = random.randint(1,9), random.randint(2,9)
+            op = random.choice(["+","-"])
+            from math import gcd
+            if op == "+":
+                num = n1*d2 + n2*d1; den = d1*d2
+            else:
+                num = n1*d2 - n2*d1; den = d1*d2
+            g = gcd(abs(num), den); num//=g; den//=g
+            return f"{n1}/{d1} {op} {n2}/{d2} = ? (Basit kesir olarak)", (num, den)
+        if topic_key == "oran_oranti":
+            a = random.randint(2,9)
+            x = random.randint(2,9)
+            b = a * x
+            return f"{a} : {b} = ? : 12 → ? kaçtır?", (12 * a) // a if a!=0 else 12
+        if topic_key == "denklem":
+            a = random.randint(2,9); b = random.randint(1,15); c = random.randint(1,15)
+            x = c - b
+            if a != 0 and x % a == 0:
+                sol = x // a
+            else:
+                sol = (c-b)/a
+            return f"{a}x + {b} = {c} → x = ?", sol
+        if topic_key == "geometri_alan":
+            k1 = random.randint(3,20); k2 = random.randint(3,20)
+            return f"Kenarları {k1} ve {k2} olan dikdörtgenin alanı?", k1*k2
+        return "?", None
+
+    if "quiz_state" not in st.session_state:
+        st.session_state.quiz_state = {"items": [], "answers": {}, "results": None}
+
+    num_q = st.slider("Soru sayısı (her konudan)", 1, 5, 2)
+    if st.button("Soruları oluştur"):
+        items = []
+        for tkey in topics:
+            for _ in range(num_q):
+                q, a = gen_question(tkey)
+                items.append({"topic": tkey, "text": q, "answer": a})
+        random.shuffle(items)
+        st.session_state.quiz_state = {"items": items, "answers": {}, "results": None}
+
+    items = st.session_state.quiz_state["items"]
+    if items:
+        with st.form("quiz_form"):
+            st.write("### Sorular")
+            for i, it in enumerate(items):
+                key = f"q_{i}"
+                st.write(f"**({topics[it['topic']]})** {it['text']}")
+                st.text_input("Cevabınız", key=key)
+            submitted = st.form_submit_button("Değerlendir", type="primary")
+        if submitted:
+            per_topic = {k: {"correct":0, "total":0} for k in topics}
+            correct_count = 0
+            for i, it in enumerate(items):
+                user = st.session_state.get(f"q_{i}", "").strip()
+                ans = it["answer"]
+                t = it["topic"]
+                per_topic[t]["total"] += 1
+                is_ok = False
+                if isinstance(ans, tuple):
+                    if "/" in user:
+                        try:
+                            uu, vv = user.split("/")
+                            uu, vv = int(uu), int(vv)
+                            is_ok = (uu, vv) == ans
+                        except Exception:
+                            is_ok = False
+                else:
+                    try:
+                        is_ok = float(user) == float(ans)
+                    except Exception:
+                        is_ok = False
+                if is_ok:
+                    correct_count += 1
+                    per_topic[t]["correct"] += 1
+            st.session_state.quiz_state["results"] = {"per_topic": per_topic, "correct": correct_count, "total": len(items)}
+
+    res = st.session_state.quiz_state.get("results")
+    if res:
+        st.success(f"Toplam Doğru: {res['correct']} / {res['total']}")
+        import pandas as pd
+        rows = []
+        for tkey, rec in res["per_topic"].items():
+            pct = 0.0 if rec["total"]==0 else rec["correct"]*100.0/rec["total"]
+            rows.append({"Konu": topics[tkey], "Doğru": rec["correct"], "Toplam": rec["total"], "%": round(pct,1)})
+        dfres = pd.DataFrame(rows)
+        st.dataframe(dfres)
+        st.bar_chart(dfres.set_index("Konu")["%"])
+
+        st.markdown("### Konu Bazlı Öneriler")
+        for r in rows:
+            if r["%"] < 60:
+                if r["Konu"] == "Kesirler":
+                    st.write("- **Kesirler:** Payda eşitleme ve sadeleştirme pratiği (görsel modellerle).")
+                elif r["Konu"] == "Birinci Dereceden Denklem":
+                    st.write("- **Denklem:** Her iki tarafa aynı işlemi uygulama, işlem sırası alıştırmaları.")
+                elif r["Konu"] == "Dört İşlem":
+                    st.write("- **Dört İşlem:** Zihinden işlem ve tek adımlı problemlerle hız çalışması.")
+                elif r["Konu"] == "Oran-Orantı":
+                    st.write("- **Oran-Orantı:** Orantı tablosu ve birim oran etkinlikleri.")
+                elif r["Konu"] == "Geometri: Alan":
+                    st.write("- **Geometri (Alan):** Formül + birim karelerle alan modelleme.")
+
+st.divider()
+st.caption("v1.2 — Matematik Tanılama sekmesi eklendi. Sonraki: hata türü analizi, uyarlanabilir zorluk, IRT.")
